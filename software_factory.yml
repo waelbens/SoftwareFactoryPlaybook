@@ -1,0 +1,146 @@
+---
+- hosts: localhost
+  become: true
+  tasks:
+
+  #Requirementss
+  - name: Install Unzip.
+    apt: pkg=unzip=6.0* state=present
+
+  #Git
+  - name: Install Git.
+    apt: name = {{item}} state = present update_cache=yes
+    with_items:
+      - git
+
+  #Nginx
+  - name: Install Nginx.
+    apt:
+      name=nginx
+      update_cache=yes
+      state=latest
+    tags:
+      - apt
+      - setup
+
+  - name: Delete default configuration.
+    shell: >
+      sudo rm /etc/nginx/sites-enabled/default
+  - name: Nginx site for Jenkins.
+    template: src=jenkins-nginx.j2 dest=/etc/nginx/sites-available/jenkins
+    sudo: yes
+
+  - name: Enable the Nginx jenkins site.
+    file: src=/etc/nginx/sites-available/jenkins dest=/etc/nginx/sites-enabled/jenkins
+          state=link
+    sudo: yes
+
+  - name: Start Nginx.
+    service: name=nginx state=started
+    sudo: yes
+
+  #SonarRunner
+  - name: Download and expand sonar-runner.
+    unarchive:
+      src: "http://repo1.maven.org/maven2/org/codehaus/sonar/runner/sonar-runner-dist/2.3/sonar-runner-dist-2.3.zip"
+      dest: "/home/ubuntu"
+      copy: no
+      creates: /usr/local/sonar-runner/bin/sonar-runner
+
+  - name: Move sonar-runner into place.
+    shell: >
+      mv /home/ubuntu/sonar-runner-2.3 /home/ubuntu/sonar-runner
+      creates=/home/ubuntu/sonar-runner/bin/sonar-runner
+
+  #SonarQube
+  - name: Download Sonar.
+    get_url:
+      url: "https://sonarsource.bintray.com/Distribution/sonarqube/sonarqube-7.2.zip"
+      dest: "/root/sonarqube-7.2.zip"
+      validate_certs: yes
+
+  - name: Unzip Sonar.
+    unarchive:
+      src: "/root/sonarqube-7.2.zip"
+      dest: /home/ubuntu
+      copy: no
+      creates: /home/ubuntu/sonar/COPYING
+
+  - name: Move Sonar into place.
+    shell: >
+      mv /home/ubuntu/sonarqube-7.2 /home/ubuntu/sonar
+      creates=/home/ubuntu/sonar/COPYING
+
+  - name: Symlink sonar bin.
+    file:
+      src: /home/ubuntu/sonar/bin/linux-x86-64/sonar.sh
+      dest: /usr/bin/sonar
+      state: link
+    register: sonar_symlink
+
+  - name: Add sonar as init script for service management.
+    file:
+      src: /home/ubuntu/sonar/bin/linux-x86-64/sonar.sh
+      dest: /etc/init.d/sonar
+      state: link
+    #when: "ansible_service_mgr != 'systemd'"
+
+  - name: Allow Sonar time to build on first start.
+    pause: seconds=180
+    #when: sonar_symlink.changed
+
+#  - name: Ensure Sonar is running and set to start on boot.
+#    remote_user: root
+#    service: name=sonar state=started enabled=yes
+
+#  - name: Make sure Sonar is responding on the configured port.
+#    wait_for: port=9000 delay=3 timeout=300
+
+  #Jenkins
+  - name: Ensure dependencies are installed.
+    apt:
+      name:
+        - curl
+        - apt-transport-https
+      state: present
+
+  - name: Add Jenkins apt repository key.
+    apt_key:
+      url: "https://pkg.jenkins.io/debian/jenkins.io.key"
+      state: present
+
+  - name: Add Jenkins apt repository.
+    apt_repository:
+      repo: "deb https://pkg.jenkins.io/debian binary/"
+      state: present
+      update_cache: yes
+    #when: deb https://pkg.jenkins.io/debian binary/ != ''
+
+  - name: Download specific Jenkins version.
+    get_url:
+      url: "https://pkg.jenkins.io/debian/binary/jenkins_2.127_all.deb"
+      dest: "/tmp/jenkins_2.127_all.deb"
+    #when: jenkins_version is defined
+
+  - name: Check if we downloaded a specific version of Jenkins.
+    stat:
+      path: "/tmp/jenkins_2.127_all.deb"
+    register: specific_version
+    #when: jenkins_version is defined
+
+  - name: Install our specific version of Jenkins.
+    apt:
+      deb: "/tmp/jenkins_2.127_all.deb"
+      state: present
+    when: specific_version.stat.exists
+    #notify: configure default users
+
+  #- name: Ensure Jenkins is installed.
+  #  apt:
+  #    name: jenkins
+    #  state: present
+  #  notify: configure default users
+
+  #- name: Deblock Jenkins.
+  #  shell: >
+  #  cat pwd | xclip -selection clipboard
